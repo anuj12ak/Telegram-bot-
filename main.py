@@ -16,7 +16,23 @@ flask_app = Flask(__name__)
 def home(): return "Bot is running on Render!"
 
 def run_flask(): flask_app.run(host="0.0.0.0", port=8080)
-Thread(target=run_flask).start()
+async def run_bot():
+    print("run_bot() started ✅")
+
+    # Flask ko asyncio ke zariye background me chalao
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, run_flask)
+    print("Flask server running in background.")
+
+    # Baaki ka code waisa hi rahega
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+    asyncio.create_task(auto_messenger(app))
+    print("Auto messenger started.")
+
+    await app.run_polling()
 
 # --- Config ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
