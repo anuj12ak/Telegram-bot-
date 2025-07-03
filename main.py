@@ -197,6 +197,7 @@ async def run_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     
+    # Background tasks ko shuru karo
     asyncio.create_task(keep_alive_server())
     asyncio.create_task(auto_messenger(app))
 
