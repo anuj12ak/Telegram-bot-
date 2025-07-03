@@ -190,19 +190,35 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Main Execution ---
 async def run_bot():
-    """Initializes and runs the bot."""
+    """Initializes and runs the bot in a safe way."""
     print("run_bot() started ✅")
     
+    # 1. Application ko banayein
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    # 2. Handlers add karein
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     
-    # Background tasks ko shuru karo
+    # 3. Application ko safely initialize karein
+    await app.initialize()
+    print("Bot has been initialized.")
+    
+    # 4. Background tasks shuru karein
     asyncio.create_task(keep_alive_server())
     asyncio.create_task(auto_messenger(app))
+    print("Background tasks started.")
 
-    print("Starting bot polling...")
-    await app.run_polling()
+    # 5. Bot ki polling shuru karein
+    await app.start_polling()
+    print("Bot polling started.")
+    
+    # 6. Bot ko chalta rehne dein
+    await app.idle()
+    print("Bot is idling.")
+
 
 if __name__ == "__main__":
+    print("Script started.")
     asyncio.run(run_bot())
+
