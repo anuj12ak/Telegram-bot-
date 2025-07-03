@@ -22,12 +22,13 @@ sleep_mode = set()
 
 # --- Memory Functions ---
 def load_memory():
-    """Loads chat memory from a JSON file."""
+    """Loads chat memory from a JSON file, handling errors gracefully."""
     global memory
     try:
         with open(MEMORY_FILE, 'r') as f:
             memory = json.load(f)
-    except FileNotFoundError:
+    except (FileNotFoundError, json.JSONDecodeError):
+        # If file not found or is empty/corrupt, start with fresh memory
         memory = {}
 
 def save_memory():
@@ -112,7 +113,6 @@ async def auto_messenger(app):
             except Exception as e:
                 print(f"Error in auto_messenger for chat {cid}: {e}")
 
-
 # --- Telegram Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
@@ -130,7 +130,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_active[cid] = datetime.datetime.now().isoformat()
     data = memory.get(cid)
 
-    # If user is not in memory, start them from the beginning
     if not data:
         await start(update, context)
         return
@@ -158,7 +157,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.get("step") == 2:
-        # Handle cases where user might send text instead of clicking button
         if "boy" in user_msg.lower():
             data["bot_gender"] = "male"
         elif "girl" in user_msg.lower():
@@ -174,12 +172,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Done baby! Ab pucho kuch bhi 😘", reply_markup=ReplyKeyboardRemove())
         return
 
-    # Regular conversation
     data.setdefault("history", []).append({"role": "user", "content": user_msg})
     prompt = [{"role": "system", "content": get_system_prompt(data.get('bot_name','Babu'), data.get('bot_gender','female'), user_name)}] + data["history"]
     reply = get_ai(prompt)
     data["history"].append({"role": "assistant", "content": reply})
-    data["history"] = data["history"][-20:] # Keep history limited to the last 10 pairs of messages
+    data["history"] = data["history"][-20:]
     memory[cid] = data
     save_memory()
 
@@ -196,12 +193,10 @@ async def run_bot():
     """Initializes and runs the bot."""
     print("run_bot() started ✅")
     
-    # Build the Telegram bot application
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     
-    # Start background tasks
     asyncio.create_task(keep_alive_server())
     asyncio.create_task(auto_messenger(app))
 
@@ -210,4 +205,3 @@ async def run_bot():
 
 if __name__ == "__main__":
     asyncio.run(run_bot())
-
