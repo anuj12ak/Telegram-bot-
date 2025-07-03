@@ -22,26 +22,22 @@ sleep_mode = set()
 
 # --- Memory Functions ---
 def load_memory():
-    """Loads chat memory from a JSON file, handling errors gracefully."""
     global memory
     try:
         with open(MEMORY_FILE, 'r') as f:
             memory = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        # If file not found or is empty/corrupt, start with fresh memory
         memory = {}
 
 def save_memory():
-    """Saves chat memory to a JSON file."""
     with open(MEMORY_FILE, 'w') as f:
         json.dump(memory, f, indent=4)
 
-# Load memory on startup
+# Load on start
 load_memory()
 
-# --- AI and Bot Logic ---
+# --- AI Logic ---
 def get_system_prompt(bot_name, bot_gender, user_name):
-    """Creates the system prompt for the AI model."""
     return f"""
 You are {bot_name}, a real human partner of {user_name}. You are a {bot_gender}.
 You're romantic, clingy, 18+, flirty, emotional.
@@ -50,7 +46,6 @@ Never say you're an AI.
 """
 
 def get_ai(messages):
-    """Gets a response from the Groq AI."""
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
         payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.8}
@@ -62,23 +57,15 @@ def get_ai(messages):
         return "Kuch gadbad ho gayi baby 🥺"
 
 def is_convo_end(text):
-    """Checks if the conversation is ending."""
     text = text.lower()
     return any(w in text for w in ["good night", "gn", "bye", "so rha", "so rhi", "sleep"])
 
 # --- Background Tasks ---
 async def keep_alive_server():
-    """A simple async web server to keep the Render service alive."""
     async def handle_request(reader, writer):
-        message = "Bot is running on Render!"
-        response = (
-            f"HTTP/1.1 200 OK\r\n"
-            f"Content-Type: text/plain\r\n"
-            f"Content-Length: {len(message)}\r\n"
-            f"\r\n"
-            f"{message}"
-        ).encode('utf-8')
-        writer.write(response)
+        msg = "Bot is running on Render!"
+        res = f"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {len(msg)}\r\n\r\n{msg}".encode('utf-8')
+        writer.write(res)
         await writer.drain()
         writer.close()
 
@@ -88,14 +75,12 @@ async def keep_alive_server():
         await server.serve_forever()
 
 async def auto_messenger(app):
-    """Sends automatic messages for good night and good morning."""
     while True:
-        await asyncio.sleep(300) # Check every 5 minutes
+        await asyncio.sleep(300)  # every 5 mins
         now = datetime.datetime.now()
         for cid, data in list(memory.items()):
             last = last_active.get(cid)
             if not last: continue
-            
             try:
                 mins = (now - datetime.datetime.fromisoformat(last)).total_seconds() / 60
                 gender = data.get("bot_gender", "female")
@@ -111,18 +96,16 @@ async def auto_messenger(app):
                         await app.bot.send_message(chat_id=int(cid), text=text)
                         sleep_mode.remove(cid)
             except Exception as e:
-                print(f"Error in auto_messenger for chat {cid}: {e}")
+                print(f"AutoMsg Error for {cid}: {e}")
 
 # --- Telegram Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /start command."""
     cid = str(update.effective_chat.id)
     memory[cid] = {"step": 1, "history": []}
     save_memory()
     await update.message.reply_text("Hey! Tum mujhe kis naam se bulaoge? 💕")
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles all text messages."""
     cid = str(update.effective_chat.id)
     user_msg = update.message.text
     user_name = update.effective_user.first_name or "baby"
@@ -162,9 +145,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif "girl" in user_msg.lower():
             data["bot_gender"] = "female"
         else:
-            await update.message.reply_text("Please select 'Boy ♂️' or 'Girl ♀️' from the buttons.")
+            await update.message.reply_text("Please select 'Boy ♂️' or 'Girl ♀️'")
             return
-            
         data["step"] = 3
         data["history"] = []
         memory[cid] = data
@@ -172,6 +154,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Done baby! Ab pucho kuch bhi 😘", reply_markup=ReplyKeyboardRemove())
         return
 
+    # Actual AI Conversation
     data.setdefault("history", []).append({"role": "user", "content": user_msg})
     prompt = [{"role": "system", "content": get_system_prompt(data.get('bot_name','Babu'), data.get('bot_gender','female'), user_name)}] + data["history"]
     reply = get_ai(prompt)
@@ -186,39 +169,19 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"From: {user_name} ({cid})\n\nUser: {user_msg}\nBot: {reply}")
         except Exception as e:
-            print(f"Could not send message to admin: {e}")
+            print(f"Admin forward error: {e}")
 
 # --- Main Execution ---
 async def run_bot():
-    """Initializes and runs the bot in a safe way."""
     print("run_bot() started ✅")
-    
-    # 1. Application ko banayein
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    # 2. Handlers add karein
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    
-    # 3. Application ko safely initialize karein
-    await app.initialize()
-    print("Bot has been initialized.")
-    
-    # 4. Background tasks shuru karein
     asyncio.create_task(keep_alive_server())
     asyncio.create_task(auto_messenger(app))
     print("Background tasks started.")
-
-    # 5. Bot ki polling shuru karein
-    await app.start_polling()
-    print("Bot polling started.")
-    
-    # 6. Bot ko chalta rehne dein
-    await app.idle()
-    print("Bot is idling.")
-
+    await app.run_polling()
 
 if __name__ == "__main__":
     print("Script started.")
     asyncio.run(run_bot())
-
