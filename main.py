@@ -159,13 +159,20 @@ async def main():
     await bot_app.run_polling()
 
 if __name__ == "__main__":
+    import sys
+    import asyncio
+
     try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import nest_asyncio
+        nest_asyncio.apply()
+        loop.create_task(main())
+        import time
+        while True:
+            time.sleep(3600)
+    else:
         asyncio.run(main())
-    except RuntimeError as e:
-        if "already running" in str(e):
-            import nest_asyncio
-            nest_asyncio.apply()
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(main())
-        else:
-            raise
