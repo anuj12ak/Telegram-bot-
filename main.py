@@ -27,7 +27,8 @@ def load_memory():
     try:
         with open(MEMORY_FILE, 'r') as f:
             memory = json.load(f)
-    except: memory = {}
+    except:
+        memory = {}
 
 def save_memory():
     with open(MEMORY_FILE, 'w') as f:
@@ -53,6 +54,7 @@ def get_ai(messages):
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
         payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.8}
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+        print("API response:", res.json())  # Debug print
         return res.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
         print("GROQ API Error:", e)
@@ -67,73 +69,38 @@ def gender_reply(text_male, text_female, gender):
     return text_male if gender == "male" else text_female
 
 # --- Handlers ---
+
+# Yahan sirf echo se start karta hoon debugging ke liye
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("Received message:", update.message.text)  # Debug
+    await update.message.reply_text("Ack received!")
+
+# Simple command to test bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
     memory[cid] = {"step": 1, "history": []}
     save_memory()
     await update.message.reply_text("Heyy... Tum mujhe kis naam se bulaoge? 💕")
 
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cid = str(update.effective_chat.id)
-    msg = update.message.text
-    name = update.effective_user.first_name or "baby"
-    now = datetime.datetime.now()
-    last_active[cid] = now.isoformat()
+# Main run function
+async def runner():
+    load_memory()
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    data = memory.get(cid)
-    if not data:
-        await start(update, context)
-        return
+    # Register test handler (echo)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    # Start auto messages task
+    asyncio.create_task(auto_msgs(application.bot))
+    await application.initialize()
+    await application.run_polling()
 
-    data["last_msg"] = msg
-
-    if cid in sleep_mode:
-        g = data.get("bot_gender", "female")
-        await update.message.reply_text(gender_reply("So gaya tha baby 🌙", "So gayi thi baby 🌙", g))
-        return
-
-    if msg.lower() == "restart chat":
-        memory[cid] = {"step": 1, "history": []}
-        save_memory()
-        await update.message.reply_text("Chalo fir se shuru karte hain 💕")
-        return
-
-    if data.get("step") == 1:
-        data["bot_name"] = msg.strip()
-        data["step"] = 2
-        save_memory()
-        await update.message.reply_text("Ladka hoon ya ladki? 😜", reply_markup=ReplyKeyboardMarkup([['Boy ♂️', 'Girl ♀️']], one_time_keyboard=True))
-        return
-
-    if data.get("step") == 2:
-        data["bot_gender"] = "male" if "boy" in msg.lower() else "female"
-        data["step"] = 3
-        data["history"] = []
-        save_memory()
-        await update.message.reply_text("Done baby! Ab pucho kuch bhi 😘", reply_markup=ReplyKeyboardRemove())
-        return
-
-    data.setdefault("history", []).append({"role": "user", "content": msg})
-    prompt = [{"role": "system", "content": get_prompt(data.get("bot_name", "Baby"), data.get("bot_gender", "female"), name)}] + data["history"][-20:]
-    reply = get_ai(prompt)
-
-    data["history"].append({"role": "assistant", "content": reply})
-    memory[cid] = data
-    save_memory()
-
-    await update.message.reply_text(reply)
-
-    if ADMIN_CHAT_ID:
-        try:
-            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"{name} ({cid}): {msg}\nBot: {reply}")
-        except: pass
-
-# --- Auto GM / GN ---
+# Auto message logic (gut check, optional)
 async def auto_msgs(bot):
     while True:
         await asyncio.sleep(300)
         now = datetime.datetime.now()
-        for cid, data in memory.items():
+        for cid, data in list(memory.items()):
             try:
                 last = datetime.datetime.fromisoformat(last_active.get(cid, now.isoformat()))
                 mins = (now - last).total_seconds() / 60
@@ -148,20 +115,6 @@ async def auto_msgs(bot):
                     sleep_mode.remove(cid)
             except Exception as e:
                 print(f"AutoMsg Error for {cid}: {e}")
-
-# --- Main ---
-async def runner():
-    load_memory()
-    bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    asyncio.create_task(auto_msgs(bot_app.bot))
-    await bot_app.initialize()
-    await bot_app.start()
-    await bot_app.updater.start_polling()
-    await bot_app.updater.wait()
-    await bot_app.stop()
-    await bot_app.shutdown()
 
 if __name__ == "__main__":
     import asyncio
