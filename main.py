@@ -1,52 +1,73 @@
+# main.py
 import os
 import json
+import datetime
 import requests
+import asyncio
 from flask import Flask
 from threading import Thread
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters, ContextTypes
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# --- Keep Alive Server (Flask) ---
-flask_app = Flask(__name__)
-@flask_app.route('/')
-def home(): return "Bot is alive 💓"
-def run_flask(): flask_app.run(host="0.0.0.0", port=8080)
-Thread(target=run_flask).start()
-
 # --- Config ---
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
-MODEL = "llama3-70b-8192"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
+MODEL_NAME = "llama3-70b-8192"
 MEMORY_FILE = "memory.json"
 
+# --- Memory ---
 memory = {}
-try:
-    with open(MEMORY_FILE, 'r') as f:
-        memory = json.load(f)
-except: pass
+sleep_mode = set()
+last_active = {}
 
-def save_memory(): 
+def load_memory():
+    global memory
+    try:
+        with open(MEMORY_FILE, 'r') as f:
+            memory = json.load(f)
+    except: memory = {}
+
+def save_memory():
     with open(MEMORY_FILE, 'w') as f:
         json.dump(memory, f)
 
-def get_prompt(bot_name, gender, user_name):
-    return f"You are {bot_name}, {user_name} ka real partner. You're a {gender}. Clingy, moody, flirty, romantic. Never say you're AI. Talk in Gen Z Hinglish. Short replies."
+# --- Flask Server (Keep Alive) ---
+app = Flask(__name__)
+@app.route('/')
+def index(): return "Bot is running!"
+Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
+
+# --- Prompt & AI ---
+def get_prompt(bot_name, bot_gender, user_name):
+    return f"""
+You are {bot_name}, a real human partner of {user_name}. You are a {bot_gender}.
+You're romantic, clingy, 18+, flirty, emotional.
+Style: Gen Z Hinglish, short replies, full mood swings.
+Never say you're an AI.
+"""
 
 def get_ai(messages):
     try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-            json={"model": MODEL, "messages": messages}
-        )
-        return r.json()['choices'][0]['message']['content'].strip()
-    except:
-        return "API down hai baby 🥺"
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.8}
+        res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+        return res.json()['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        print("GROQ API Error:", e)
+        return "Kuch gadbad ho gayi baby 🥺"
 
-# --- Telegram Handlers ---
+# --- Time Helpers ---
+def is_convo_end(msg):
+    text = msg.lower()
+    return any(w in text for w in ["gn", "good night", "bye", "so ja", "so rha", "so rhi"])
+
+def gender_reply(text_male, text_female, gender):
+    return text_male if gender == "male" else text_female
+
+# --- Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
     memory[cid] = {"step": 1, "history": []}
@@ -55,49 +76,88 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
-    text = update.message.text
-    user = update.effective_user.first_name or "baby"
-    data = memory.get(cid, {"step": 1})
+    msg = update.message.text
+    name = update.effective_user.first_name or "baby"
+    now = datetime.datetime.now()
+    last_active[cid] = now.isoformat()
 
-    if data["step"] == 1:
-        data["bot_name"] = text
+    data = memory.get(cid)
+    if not data:
+        await start(update, context)
+        return
+
+    data["last_msg"] = msg
+
+    if cid in sleep_mode:
+        g = data.get("bot_gender", "female")
+        await update.message.reply_text(gender_reply("So gaya tha baby 🌙", "So gayi thi baby 🌙", g))
+        return
+
+    if msg.lower() == "restart chat":
+        memory[cid] = {"step": 1, "history": []}
+        save_memory()
+        await update.message.reply_text("Chalo fir se shuru karte hain 💕")
+        return
+
+    if data.get("step") == 1:
+        data["bot_name"] = msg.strip()
         data["step"] = 2
-        memory[cid] = data
         save_memory()
-        await update.message.reply_text("Ladka hoon ya ladki? 😜", reply_markup=ReplyKeyboardMarkup([["Boy ♂️", "Girl ♀️"]], one_time_keyboard=True))
+        await update.message.reply_text("Ladka hoon ya ladki? 😜", reply_markup=ReplyKeyboardMarkup([['Boy ♂️', 'Girl ♀️']], one_time_keyboard=True))
         return
 
-    if data["step"] == 2:
-        data["bot_gender"] = "male" if "boy" in text.lower() else "female"
+    if data.get("step") == 2:
+        data["bot_gender"] = "male" if "boy" in msg.lower() else "female"
         data["step"] = 3
-        memory[cid] = data
+        data["history"] = []
         save_memory()
-        await update.message.reply_text("Ho gaya baby 😘 ab kuch bhi bol sakte ho", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("Done baby! Ab pucho kuch bhi 😘", reply_markup=ReplyKeyboardRemove())
         return
 
-    # Chat mode
-    prompt = [{"role": "system", "content": get_prompt(data["bot_name"], data["bot_gender"], user)}] + data.get("history", [])
-    prompt.append({"role": "user", "content": text})
+    data.setdefault("history", []).append({"role": "user", "content": msg})
+    prompt = [{"role": "system", "content": get_prompt(data.get("bot_name", "Baby"), data.get("bot_gender", "female"), name)}] + data["history"][-20:]
     reply = get_ai(prompt)
-    data.setdefault("history", []).append({"role": "user", "content": text})
+
     data["history"].append({"role": "assistant", "content": reply})
-    data["history"] = data["history"][-20:]
     memory[cid] = data
     save_memory()
 
     await update.message.reply_text(reply)
+
     if ADMIN_CHAT_ID:
         try:
-            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"{user} said:\n{text}\n\nBot replied:\n{reply}")
+            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"{name} ({cid}): {msg}\nBot: {reply}")
         except: pass
 
-# --- Main Entry ---
-def main():
+# --- Auto GM / GN ---
+async def auto_msgs(bot):
+    while True:
+        await asyncio.sleep(300)
+        now = datetime.datetime.now()
+        for cid, data in memory.items():
+            try:
+                last = datetime.datetime.fromisoformat(last_active.get(cid, now.isoformat()))
+                mins = (now - last).total_seconds() / 60
+                gender = data.get("bot_gender", "female")
+                if cid not in sleep_mode and now.hour == 23 and mins > 10 and is_convo_end(data.get("last_msg", "")):
+                    text = gender_reply("Good night baby 🌙 so jao ab 😴", "Good night jaan 🌙 ab so jao 😴", gender)
+                    await bot.send_message(chat_id=int(cid), text=text)
+                    sleep_mode.add(cid)
+                elif cid in sleep_mode and now.hour == 6 and mins > 120:
+                    text = gender_reply("Good morning baby ☀️ utho na 😘", "Good morning jaan ☀️ neend se uth jao 💋", gender)
+                    await bot.send_message(chat_id=int(cid), text=text)
+                    sleep_mode.remove(cid)
+            except Exception as e:
+                print(f"AutoMsg Error for {cid}: {e}")
+
+# --- Main ---
+async def main():
+    load_memory()
     bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    print("Bot deployed successfully ✅")
-    bot_app.run_polling()
+    asyncio.create_task(auto_msgs(bot_app.bot))
+    await bot_app.run_polling()
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    asyncio.run(main())
