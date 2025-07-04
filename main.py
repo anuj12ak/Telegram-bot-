@@ -1,4 +1,3 @@
-# main.py
 import os
 import json
 import datetime
@@ -159,12 +158,13 @@ async def main():
     asyncio.create_task(auto_msgs(bot_app.bot))
     await bot_app.run_polling()
 
-# ✅ Runtime fix for Render
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except RuntimeError as e:
         if "already running" in str(e):
+            import nest_asyncio
+            nest_asyncio.apply()
             loop = asyncio.get_event_loop()
             loop.run_until_complete(main())
         else:
