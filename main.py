@@ -6,7 +6,9 @@ import asyncio
 from flask import Flask
 from threading import Thread
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
+)
 
 # --- Config ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -25,8 +27,7 @@ def load_memory():
     try:
         with open(MEMORY_FILE, 'r') as f:
             memory = json.load(f)
-    except:
-        memory = {}
+    except: memory = {}
 
 def save_memory():
     with open(MEMORY_FILE, 'w') as f:
@@ -36,8 +37,7 @@ def save_memory():
 app = Flask(__name__)
 @app.route('/')
 def index(): return "Bot is running!"
-def run_flask(): app.run(host="0.0.0.0", port=8080)
-Thread(target=run_flask).start()
+Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
 # --- Prompt & AI ---
 def get_prompt(bot_name, bot_gender, user_name):
@@ -50,22 +50,15 @@ Never say you're an AI.
 
 def get_ai(messages):
     try:
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": MODEL_NAME,
-            "messages": messages,
-            "temperature": 0.8
-        }
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.8}
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
         return res.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
         print("GROQ API Error:", e)
         return "Kuch gadbad ho gayi baby 🥺"
 
-# --- Utils ---
+# --- Time Helpers ---
 def is_convo_end(msg):
     text = msg.lower()
     return any(w in text for w in ["gn", "good night", "bye", "so ja", "so rha", "so rhi"])
@@ -135,7 +128,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"{name} ({cid}): {msg}\nBot: {reply}")
         except: pass
 
-# --- Auto Good Night / Morning ---
+# --- Auto GM / GN ---
 async def auto_msgs(bot):
     while True:
         await asyncio.sleep(300)
@@ -156,22 +149,35 @@ async def auto_msgs(bot):
             except Exception as e:
                 print(f"AutoMsg Error for {cid}: {e}")
 
-# --- Main Run ---
-async def main():
+# --- Main ---
+async def runner():
     load_memory()
     bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     asyncio.create_task(auto_msgs(bot_app.bot))
-    await bot_app.run_polling()
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling()
+    await bot_app.updater.wait()
+    await bot_app.stop()
+    await bot_app.shutdown()
 
-# --- Async Runtime Fix for Render ---
-if __name__ == '__main__':
+if __name__ == "__main__":
+    import asyncio
+    import sys
+
     try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(main())
-        else:
-            raise
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import nest_asyncio
+        nest_asyncio.apply()
+        asyncio.ensure_future(runner())
+        import time
+        while True:
+            time.sleep(3600)
+    else:
+        asyncio.run(runner())
