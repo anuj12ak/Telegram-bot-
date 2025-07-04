@@ -150,17 +150,22 @@ async def auto_msgs(bot):
                 print(f"AutoMsg Error for {cid}: {e}")
 
 # --- Main ---
-async def main():
+async def runner():
     load_memory()
     bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     asyncio.create_task(auto_msgs(bot_app.bot))
-    await bot_app.run_polling()
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling()
+    await bot_app.updater.wait()
+    await bot_app.stop()
+    await bot_app.shutdown()
 
 if __name__ == "__main__":
-    import sys
     import asyncio
+    import sys
 
     try:
         loop = asyncio.get_running_loop()
@@ -170,9 +175,9 @@ if __name__ == "__main__":
     if loop and loop.is_running():
         import nest_asyncio
         nest_asyncio.apply()
-        loop.create_task(main())
+        asyncio.ensure_future(runner())
         import time
         while True:
             time.sleep(3600)
     else:
-        asyncio.run(main())
+        asyncio.run(runner())
