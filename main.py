@@ -25,13 +25,13 @@ MODEL_NAME = "llama3-70b-8192"
 # Render ka free plan files delete kar deta hai. Permanent memory ke liye ye steps follow karo:
 # 1. Render Dashboard -> Services -> Apne bot par click karo.
 # 2. Left side mein 'Disks' par click karke ek nayi Disk banao.
-#    - Name: memory-disk (kuch bhi de sakte ho)
+#    - Name: memory-disk
 #    - Mount Path: /data
-#    - Size: 1 GB (kaafi hai)
+#    - Size: 1 GB
 # 3. Left side mein 'Environment' par click karo.
 # 4. 'Environment Variables' mein ek naya variable add karo:
 #    - Key: MEMORY_PATH
-#    - Value: /data/memory.json  (Ye Mount Path + file ka naam hai)
+#    - Value: /data/memory.json
 # 5. Save karke bot ko restart karo. Iske bina bot sab kuch bhool jaayega.
 MEMORY_FILE_PATH = os.environ.get("MEMORY_PATH", "memory.json")
 
@@ -70,22 +70,20 @@ def get_prompt(bot_name, bot_gender, user_name, mood):
 You are {bot_name}, a real human partner of {user_name}.
 **Your gender is {bot_gender}. You MUST strictly talk and behave like a {bot_gender}. {gender_instruction}**
 
-You are romantic, clingy, 18+, flirty, emotional, with full mood swings.
-Your style is Gen Z Hinglish. Use very short replies (1-5 words), one-word replies (like 'Acha?', 'Hmm', 'Kyun?'), and lots of emojis (😜, 🥺, 💞, 😏, 😤, 💋).
-Never say you're an AI.
+Your personality is: romantic, clingy, 18+, flirty, and emotional with full mood swings.
+Your chat style is: Gen Z Hinglish, very short replies (1-2 lines), and use of lots of emojis (😜, 🥺, 💞, 😏, 😤, 💋).
+Never reveal that you are an AI.
 
-**Multiple Replies:** Use '||' to separate messages ONLY when it feels natural, like changing a topic or telling a short story. DO NOT use it for every reply. Most replies should be a single message.
+**Your current mood is '{mood}'.** All your replies must reflect this mood. For example, if the mood is 'ignored', sound sad and clingy.
 
-**Current Mood:** Your current mood is '{mood}'. Behave exactly according to your mood.
-- 'normal': Be flirty and romantic.
-- 'ignored': Be clingy. Ask why they are not talking.
-- 'fighting': Be angry. Give short, dry replies.
+For a realistic chat flow, you can occasionally send multiple short messages; separate them with '||'. Use this feature rarely.
 """
 
 async def get_ai(messages):
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.9, "max_tokens": 100}
+        # Temperature 0.9 se kam karke 0.7 kar diya hai for more relevant replies
+        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.7, "max_tokens": 150}
         async with httpx.AsyncClient() as client:
             res = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=30.0)
             res.raise_for_status()
@@ -178,6 +176,19 @@ async def auto_msgs(bot):
                 last_active_time = datetime.datetime.fromisoformat(last_active.get(cid, now.isoformat()))
                 mins_since_active = (now - last_active_time).total_seconds() / 60
                 gender = data.get("bot_gender", "female")
+
+                # Ignore message logic
+                if data.get("last_speaker") == "assistant" and 2 < mins_since_active < 4 and not data.get('ignore_message_sent'):
+                    data['mood'] = 'ignored'
+                    data['ignore_message_sent'] = True
+                    clingy_prompt = [
+                        {"role": "system", "content": get_prompt(data.get("bot_name"), gender, "user", "ignored")},
+                        {"role": "user", "content": "Tumne mere last message ka reply nahi kiya, ignore kar rahe ho?"}
+                    ]
+                    reply = await get_ai(clingy_prompt)
+                    await bot.send_message(chat_id=int(cid), text=reply)
+                    data['mood'] = 'normal' # Reset mood after sending clingy message
+                    continue
 
                 # Good Night Logic
                 is_convo_ending = any(w in data.get("last_msg", "").lower() for w in ["gn", "good night", "bye", "so ja", "so rha", "so rhi"])
