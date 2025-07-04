@@ -160,4 +160,18 @@ async def main():
     await bot_app.run_polling()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+   import asyncio
+
+async def main():
+    # aapka main async code yahan hai
+    ...
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if "already running" in str(e):
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(main())
+        else:
+            raise
