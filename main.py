@@ -159,6 +159,13 @@ async def main():
     asyncio.create_task(auto_msgs(bot_app.bot))
     await bot_app.run_polling()
 
+if __name__ == '__main__':
+   import asyncio
+
+async def main():
+    # aapka main async code yahan hai
+    ...
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
