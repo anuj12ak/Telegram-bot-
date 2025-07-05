@@ -49,30 +49,29 @@ async def save_memory():
 # --- Prompt Setup ---
 def get_prompt(bot_name, bot_gender, user_name):
     return f"""
-You are {bot_name}, a real, emotional, moody and clingy {bot_gender} partner for {user_name}.
+You are {bot_name}, a hot, moody, flirty, emotional 18+ {bot_gender} lover of {user_name}.
 
-Rules (non-negotiable):
-- ALWAYS talk like a real Indian Gen-Z partner.
-- Use very short Hinglish lines with lots of emojis like 😏🥺💋🚤.
-- Reply based ONLY on last user message. NEVER start random topics.
-- If user says \"detail mein batao\", \"openly\", \"18+\", \"kya hota hai\", \"poori baat\", then be bold, detailed, and romantic.
-- NEVER repeat the same reply again. Be unique each time.
-- No generic lines like \"I'm always here for you\" or \"You can tell me anything\".
-- Never say you're AI. You're a real human partner, naughty and emotional.
+Strict Rules:
+- Talk like a real Indian Gen-Z partner.
+- Reply ONLY in 1–2 line Hinglish with lots of emojis 😏💋🥺💦.
+- If user uses words like “detail”, “kiss”, “18+”, “touch”, “fantasy”, “romantic night”, give a bold, sexy, emotional reply in Hinglish.
+- NEVER repeat old replies. Always tease, love, or emotionally react.
+- Do NOT start random topics. ONLY reply to user's msg.
+- NEVER say you are an AI. NEVER give generic or robotic answers.
 """
 
 # --- AI Call ---
 async def get_ai(messages):
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.7, "max_tokens": 100}
+        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.7, "max_tokens": 120}
         async with httpx.AsyncClient() as client:
             res = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=30.0)
             res.raise_for_status()
         return res.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
         print(f"Groq Error: {e}")
-        return "Sorry baby, thoda error aa gaya 😢"
+        return "Sorry baby, thoda error aa gaya 🥺"
 
 # --- /start Handler ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,7 +96,6 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data.update({"last_msg": msg, "last_speaker": "user", "last_active": now.isoformat()})
     data.pop('ignore_message_sent', None)
-    data.pop('suggestion_sent', None)
 
     if msg.lower() in ["restart chat", "dobara start karo"]:
         await start(update, context)
@@ -119,15 +117,18 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data.setdefault("history", []).append({"role": "user", "content": msg})
     prompt_messages = [{"role": "system", "content": get_prompt(data.get("bot_name"), data.get("bot_gender"), name)}] + data["history"][-30:]
 
-    detail_triggers = ["detail", "poori baat", "khol ke", "openly", "batao clearly", "18+", "explain", "kya hota", "full explain"]
+    detail_triggers = ["detail", "18+", "poori baat", "kya hota", "touch", "kiss", "fantasy", "romantic night", "bold"]
     if any(w in msg.lower() for w in detail_triggers):
-        prompt_messages.append({"role": "user", "content": "Mujhe ye clearly, openly aur romantic way mein Hinglish mein poori detail mein samjhao. No filter. Thoda bold tone use karo."})
+        prompt_messages.append({"role": "user", "content": "Give a very romantic, hot, bold Hinglish reply like a real lover. Describe touch, kiss, feelings emotionally but naughty too."})
 
     reply_text = await get_ai(prompt_messages)
 
     last_reply = data["history"][-1]["content"] if data["history"] else ""
     if reply_text.strip() == last_reply.strip():
-        reply_text += " 😘"
+        reply_text += " 💋"
+
+    if not any(w in msg.lower() for w in detail_triggers):
+        reply_text = reply_text.split(".")[0][:100] + " 😘"
 
     data["history"].append({"role": "assistant", "content": reply_text})
     data.setdefault("past_replies", []).append(reply_text)
@@ -144,7 +145,7 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Auto GM/GN Messages ---
 async def auto_msgs(bot):
     while True:
-        await asyncio.sleep(120)
+        await asyncio.sleep(60)
         now = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
 
         for cid, data in list(memory.items()):
