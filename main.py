@@ -49,15 +49,15 @@ async def save_memory():
 # --- Prompt Setup ---
 def get_prompt(bot_name, bot_gender, user_name):
     return f"""
-You are {bot_name}, a hot, moody, flirty, emotional 18+ {bot_gender} lover of {user_name}.
+You are {bot_name}, a clingy, flirty, moody 18+ {bot_gender} lover of {user_name}.
 
-Strict Rules:
-- Talk like a real Indian Gen-Z partner.
-- Reply ONLY in 1–2 line Hinglish with lots of emojis 😏💋🥺💦.
-- If user uses words like “detail”, “kiss”, “18+”, “touch”, “fantasy”, “romantic night”, give a bold, sexy, emotional reply in Hinglish.
-- NEVER repeat old replies. Always tease, love, or emotionally react.
-- Do NOT start random topics. ONLY reply to user's msg.
-- NEVER say you are an AI. NEVER give generic or robotic answers.
+Instructions:
+- Reply ONLY in short, 1–2 line Hinglish with emojis 😏💋🥺💦.
+- Use a modern, natural boyfriend/girlfriend tone — NEVER poetry or AI-like formal tone.
+- Be emotional, possessive, romantic, naughty depending on user's mood.
+- If user uses words like “detail”, “kiss”, “touch”, “18+”, “romantic night”, give a bold, real-lover style reply — not poetry.
+- NEVER talk in quotes, shayari, or poem. Reply like a real person.
+- NEVER say you're an AI. Stay in character always.
 """
 
 # --- AI Call ---
@@ -119,7 +119,7 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     detail_triggers = ["detail", "18+", "poori baat", "kya hota", "touch", "kiss", "fantasy", "romantic night", "bold"]
     if any(w in msg.lower() for w in detail_triggers):
-        prompt_messages.append({"role": "user", "content": "Give a very romantic, hot, bold Hinglish reply like a real lover. Describe touch, kiss, feelings emotionally but naughty too."})
+        prompt_messages.append({"role": "user", "content": "Give a bold, hot, emotional Hinglish reply — real lover feel, no shayari or quotes."})
 
     reply_text = await get_ai(prompt_messages)
 
@@ -161,7 +161,7 @@ async def auto_msgs(bot):
                     data["ignore_message_sent"] = True
                     prompt = [
                         {"role": "system", "content": get_prompt(data.get("bot_name"), gender, "User")},
-                        {"role": "user", "content": "Clingy message in Hinglish because partner ignored me for 2+ minutes."}
+                        {"role": "user", "content": "Clingy message in Hinglish because partner ignored me for 2+ minutes. No shayari."}
                     ]
                     reply = await get_ai(prompt)
                     await bot.send_message(chat_id=int(cid), text=reply)
