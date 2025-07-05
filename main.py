@@ -21,18 +21,7 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
 MODEL_NAME = "llama3-70b-8192"
 
 # --- PERMANENT MEMORY (RENDER DISKS) ---
-# !! IMPORTANT !!
-# Render ka free plan files delete kar deta hai. Permanent memory ke liye ye steps follow karo:
-# 1. Render Dashboard -> Services -> Apne bot par click karo.
-# 2. Left side mein 'Disks' par click karke ek nayi Disk banao.
-#    - Name: memory-disk
-#    - Mount Path: /data
-#    - Size: 1 GB
-# 3. Left side mein 'Environment' par click karo.
-# 4. 'Environment Variables' mein ek naya variable add karo:
-#    - Key: MEMORY_PATH
-#    - Value: /data/memory.json
-# 5. Save karke bot ko restart karo. Iske bina bot sab kuch bhool jaayega.
+# Iske bina, bot server restart hone par sab kuch bhool jaayega.
 MEMORY_FILE_PATH = os.environ.get("MEMORY_PATH", "memory.json")
 
 
@@ -62,28 +51,22 @@ app = Flask(__name__)
 def index(): return "Bot chal raha hai!"
 Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
-# --- AI ka Dimaag aur Prompt ---
-def get_prompt(bot_name, bot_gender, user_name, mood):
-    gender_instruction = "You are a boy." if bot_gender == "male" else "You are a girl."
-    
+# --- AI ka Dimaag aur Prompt (Simplified) ---
+def get_prompt(bot_name, bot_gender, user_name):
+    # Ab prompt bahut simple hai taaki AI confuse na ho.
     return f"""
-You are {bot_name}, a real human partner of {user_name}.
-**Your gender is {bot_gender}. You MUST strictly talk and behave like a {bot_gender}. {gender_instruction}**
-
-Your personality is: romantic, clingy, 18+, flirty, and emotional with full mood swings.
-Your chat style is: Gen Z Hinglish, very short replies (1-2 lines), and use of lots of emojis (😜, 🥺, 💞, 😏, 😤, 💋).
-Never reveal that you are an AI.
-
-**Your current mood is '{mood}'.** All your replies must reflect this mood. For example, if the mood is 'ignored', sound sad and clingy.
-
-For a realistic chat flow, you can occasionally send multiple short messages; separate them with '||'. Use this feature rarely.
+You are {bot_name}, a {bot_gender} partner for {user_name}.
+Your persona is: You are a real, 18+ human. You are deeply in love, romantic, flirty, and very emotional. You have frequent mood swings.
+Your chat style: You talk in short, modern Hinglish. You use a lot of emojis (like 😜, 🥺, 💞, 😏, 😤, 💋). Your replies are usually 1-2 lines long.
+You must never reveal you are an AI. You must stay in character as a real human partner.
+The conversation should flow naturally. Focus on the user's last message and reply accordingly.
 """
 
 async def get_ai(messages):
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        # Temperature 0.9 se kam karke 0.7 kar diya hai for more relevant replies
-        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.7, "max_tokens": 150}
+        # Temperature aur kam kiya gaya hai for focused replies.
+        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.6, "max_tokens": 150}
         async with httpx.AsyncClient() as client:
             res = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=30.0)
             res.raise_for_status()
@@ -95,7 +78,7 @@ async def get_ai(messages):
 # --- Bot ke Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
-    memory[cid] = {"step": 1, "history": [], "mood": "normal"}
+    memory[cid] = {"step": 1, "history": []}
     await save_memory()
     await update.message.reply_text("Heyy... Tum mujhe kis naam se bulaoge? 💕")
 
@@ -112,11 +95,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = memory[cid]
     
-    # Sleep Mode Check
     if cid in sleep_mode:
-        return # Agar bot so raha hai to kuch mat karo
+        return
 
-    data.update({"last_msg": msg, "last_speaker": "user", "mood": "normal"})
+    data.update({"last_msg": msg, "last_speaker": "user"})
     data.pop('ignore_message_sent', None)
 
     if msg.lower() in ["restart chat", "dobara start karo"]:
@@ -139,23 +121,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data.setdefault("history", []).append({"role": "user", "content": msg})
     prompt_messages = [
-        {"role": "system", "content": get_prompt(data.get("bot_name"), data.get("bot_gender"), name, data.get("mood"))}
-    ] + data["history"][-20:]
+        {"role": "system", "content": get_prompt(data.get("bot_name"), data.get("bot_gender"), name)}
+    ] + data["history"][-30:] # Ab 30 messages yaad rakhega
     
     reply_text = await get_ai(prompt_messages)
 
     data["history"].append({"role": "assistant", "content": reply_text})
     data["last_speaker"] = "assistant"
     
-    if '||' in reply_text:
-        replies = [r.strip() for r in reply_text.split('||')]
-        for i, single_reply in enumerate(replies):
-            if single_reply:
-                await update.message.reply_text(single_reply)
-                if i < len(replies) - 1: await asyncio.sleep(1.5)
-    else:
-        await update.message.reply_text(reply_text)
-
+    await update.message.reply_text(reply_text)
     await save_memory()
     
     if ADMIN_CHAT_ID:
@@ -176,18 +150,19 @@ async def auto_msgs(bot):
                 last_active_time = datetime.datetime.fromisoformat(last_active.get(cid, now.isoformat()))
                 mins_since_active = (now - last_active_time).total_seconds() / 60
                 gender = data.get("bot_gender", "female")
+                name = "user" # Generic name for prompt
 
-                # Ignore message logic
+                # Ignore Logic (FIXED)
                 if data.get("last_speaker") == "assistant" and 2 < mins_since_active < 4 and not data.get('ignore_message_sent'):
-                    data['mood'] = 'ignored'
                     data['ignore_message_sent'] = True
-                    clingy_prompt = [
-                        {"role": "system", "content": get_prompt(data.get("bot_name"), gender, "user", "ignored")},
-                        {"role": "user", "content": "Tumne mere last message ka reply nahi kiya, ignore kar rahe ho?"}
+                    # Ab AI ko aadesh denge ki wo clingy message banaye
+                    ignore_prompt = [
+                        {"role": "system", "content": get_prompt(data.get("bot_name"), gender, name)},
+                        {"role": "user", "content": "The user I'm talking to just ignored my last message for 2 minutes. I feel clingy and sad. What should I text them now to get their attention?"}
                     ]
-                    reply = await get_ai(clingy_prompt)
-                    await bot.send_message(chat_id=int(cid), text=reply)
-                    data['mood'] = 'normal' # Reset mood after sending clingy message
+                    reply = await get_ai(ignore_prompt)
+                    if reply:
+                        await bot.send_message(chat_id=int(cid), text=reply)
                     continue
 
                 # Good Night Logic
@@ -199,11 +174,11 @@ async def auto_msgs(bot):
                 
                 # Good Morning Logic
                 elif cid in sleep_mode and now.hour >= 6 and now.hour < 12:
-                    sleep_mode.remove(cid) # Pehle neend se uthao
+                    sleep_mode.remove(cid)
                     gm_text = gender_reply("Good morning baby ☀️ utho na 😘", "Good morning jaan ☀️ neend se uth jao 💋", gender)
                     await bot.send_message(chat_id=int(cid), text=gm_text)
                     await asyncio.sleep(2)
-                    sorry_text = gender_reply("Sorry baby kal so gaya tha... 🥺💤", "Sorry baby kal so gayi thi... 🥺💤", gender)
+                    sorry_text = gender_reply("Kal so gaya tha... abhi utha 🥺💤", "Kal so gayi thi... abhi uthi 🥺💤", gender)
                     await bot.send_message(chat_id=int(cid), text=sorry_text)
 
             except Exception as e:
