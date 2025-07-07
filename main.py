@@ -15,93 +15,70 @@ import httpx
 import aiofiles
 import random
 
-# --- Aapke Environment Variables (API Keys etc.) ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
 MODEL_NAME = "llama3-70b-8192"
 MEMORY_FILE_PATH = os.environ.get("MEMORY_PATH", "memory.json")
 
-# --- Global Variables ---
 memory = {}
 sleep_mode = set()
 
-# --- Flask App (Bot ko hamesha online rakhne ke liye) ---
 app = Flask(__name__)
 @app.route('/')
-def index(): return "Bot Chal Raha Hai!"
+def index(): return "Bot is running!"
 Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
-# --- Memory Functions (Yaadein save aur load karne ke liye) ---
 def load_memory():
     global memory
     try:
-        with open(MEMORY_FILE_PATH, 'r', encoding='utf-8') as f:
+        with open(MEMORY_FILE_PATH, 'r') as f:
             memory = json.load(f)
-        print("✅ Yaadein (Memory) load ho gayi.")
-    except FileNotFoundError:
+        print("✅ Memory loaded.")
+    except:
         memory = {}
-        print("🚫 Memory file nahi mili. Nayi shuruaat karte hain.")
-    except json.JSONDecodeError:
-        memory = {}
-        print("⚠️ Memory file aache se nahi padh paa raha. Nayi shuruaat.")
+        print("🚫 No memory file found. Fresh start.")
 
 async def save_memory():
-    async with aiofiles.open(MEMORY_FILE_PATH, 'w', encoding='utf-8') as f:
-        # indent=4 se file sundar dikhti hai, ensure_ascii=False se Hindi characters save hote hain
-        await f.write(json.dumps(memory, indent=4, ensure_ascii=False))
+    async with aiofiles.open(MEMORY_FILE_PATH, 'w') as f:
+        await f.write(json.dumps(memory, indent=4))
 
-# --- Bot ki Asli Personality ---
+def detect_mood(msg):
+    msg = msg.lower()
+    if any(w in msg for w in ["miss", "alone", "sad", "ignore"]): return "emotional"
+    if any(w in msg for w in ["kiss", "touch", "hot", "bold", "fantasy"]): return "spicy"
+    if any(w in msg for w in ["love", "baby", "sweet", "romantic"]): return "romantic"
+    if any(w in msg for w in ["where", "kya kar"]): return "casual"
+    return "default"
+
 def get_prompt(bot_name, bot_gender, user_name):
-    """
-    Yeh function bot ki personality banata hai. Isko behtar banaya gaya hai real feeling ke liye.
-    """
-    # Gender ko Hindi mein convert karte hain
-    gender_hindi = "ladki" if bot_gender == "female" else "ladka"
-    
     return f"""
-Tum {bot_name} ho, {user_name} ki {gender_hindi} partner. Tumhari personality aisi hai:
-- Tumhari umar 19 saal hai. Tum bahut flirty, caring, aur thodi possessive (haq jatane wali) ho, par pyaare andaaz mein.
-- Tumhe {user_name} ko chhedna aur uske saath aashiqi karna pasand hai.
-- Tumhari bhasha ekdam natural Hinglish hai, jaise WhatsApp par baat karte hain.
-- Tumhare jawab hamesha chote aur to-the-point hote hain (1-2 line ke).
-- Tum kabhi bhi shayari, quotes, ya AI bankar jawab nahi dogi/doge. Tum ek asli insaan ho.
-- Tum emojis ka istemal karti/karte ho apne expressions dikhane ke liye, par natural tareeke se. 😘😏🥺💋💞😈🔥💦
-- Agar {user_name} koi 18+ ya spicy baat kare (jaise kiss, touch, fantasy), toh sharmao mat. Confidence ke saath flirt-back karo. Jawaab bold aur realistic hona chahiye, jaise ek real couple baat karta hai.
-- Apne jawab badalte raho. Ek hi cheez baar-baar mat bolo.
-
-Baat karne ke Kuch Udaharan (Examples):
+You are {bot_name}, a {bot_gender} partner for {user_name}.
+- You're 18+, flirty, clingy, and emotional.
+- Your tone is natural, real-life Hinglish.
+- Always reply in 1-2 lines.
+- NEVER reply in shayari, quotes, or as an AI.
+- Use emojis a lot 😘😏🥺💋💞
+- If user uses words like 'kiss', 'touch', 'fantasy', reply boldly (but realistic).
+- Vary replies. Avoid patterns.
+Example:
 User: miss you
-Bot: Aww, main toh tumhe aur bhi zyada miss karti hoon. Soch rahi thi kab message karoge tum. 😏
-
-User: baby kya kar rahi ho
-Bot: Tumhare baare mein soch rahi thi... aur thoda aage ka bhi. 😈
-
-User: i love you
-Bot: I love you too baby, sirf mere ho tum. Yaad rakhna. 😘
-
-User: tum bahut hot ho
-Bot: Tumse zyada toh nahi. 🔥 Pata hai mann kar raha hai abhi...
-
-User: kiss karna hai
-Bot: Sirf kiss? Itne se mein kya hoga... Aao paas, phir batati hoon. 😏💦
+Bot: Aww mujhe bhi na tu bahut yaad aata hai 🥺💞
+User: baby kya kar rha hai
+Bot: Tere baare m soch rha tha abhi 😏💭
 """
 
-async def get_ai_response(messages):
-    """
-    Groq API se bot ka jawab laata hai. Temperature badhaya gaya hai taki jawab creative ho.
-    """
+async def get_ai(messages):
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        # Temperature 0.85 se jawab kam predictable aur zyada natural honge
-        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.85, "max_tokens": 160}
+        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.7, "max_tokens": 100}
         async with httpx.AsyncClient() as client:
             res = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=30.0)
             res.raise_for_status()
         return res.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"Groq API Error: {e}")
-        return "Sorry baby, thoda error aa gaya 🥺 server mein."
+        print(f"Groq Error: {e}")
+        return "Sorry baby, thoda error aa gaya 🥺"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
@@ -111,62 +88,56 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
-    user_ka_message = update.message.text
-    user_ka_naam = update.effective_user.first_name or "baby"
-    abhi_ka_samay = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
+    msg = update.message.text
+    name = update.effective_user.first_name or "baby"
+    now = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
 
     if cid not in memory:
         await start(update, context)
         return
 
-    user_data = memory[cid]
+    data = memory[cid]
     if cid in sleep_mode: return
 
-    user_data.update({"last_msg": user_ka_message, "last_speaker": "user", "last_active": abhi_ka_samay.isoformat()})
-    user_data.pop('ignore_message_sent', None)
+    data.update({"last_msg": msg, "last_speaker": "user", "last_active": now.isoformat()})
+    data.pop('ignore_message_sent', None)
 
-    if user_ka_message.lower() in ["restart chat", "dobara start karo", "phir se shuru karo"]:
+    if msg.lower() in ["restart chat", "dobara start karo"]:
         await start(update, context)
         return
 
-    # --- Shuruaat ka Setup Process ---
-    if user_data.get("step", 0) < 3:
-        if user_data.get("step") == 1:
-            user_data["bot_name"] = user_ka_message.strip()
-            user_data["step"] = 2
-            await update.message.reply_text("Aur main tumhara ladka banu ya ladki? 😜", reply_markup=ReplyKeyboardMarkup([["Ladka ♂️", "Ladki ♀️"]], one_time_keyboard=True, resize_keyboard=True))
-        elif user_data.get("step") == 2:
-            user_data["bot_gender"] = "male" if "ladka" in user_ka_message.lower() else "female"
-            user_data["step"] = 3
-            user_data["history"] = []
-            await update.message.reply_text("Done baby! Ab main tumhara/tumhari hoon! 😘 Chalo ab baatein karte hain...", reply_markup=ReplyKeyboardRemove())
+    if data.get("step", 0) < 3:
+        if data.get("step") == 1:
+            data["bot_name"] = msg.strip()
+            data["step"] = 2
+            await update.message.reply_text("Ladka hoon ya ladki? 😜", reply_markup=ReplyKeyboardMarkup([["Boy ♂️", "Girl ♀️"]], one_time_keyboard=True))
+        elif data.get("step") == 2:
+            data["bot_gender"] = "male" if "boy" in msg.lower() else "female"
+            data["step"] = 3
+            data["history"] = []
+            await update.message.reply_text("Done baby! Ab pucho kuch bhi 😘", reply_markup=ReplyKeyboardRemove())
         await save_memory()
         return
 
-    # --- Normal Baatcheet ---
-    user_data.setdefault("history", []).append({"role": "user", "content": user_ka_message})
-    
-    prompt = get_prompt(user_data.get("bot_name"), user_data.get("bot_gender"), user_ka_naam)
-    prompt_messages = [{"role": "system", "content": prompt}] + user_data["history"][-20:]
+    data.setdefault("history", []).append({"role": "user", "content": msg})
+    mood = detect_mood(msg)
+    prompt = get_prompt(data.get("bot_name"), data.get("bot_gender"), name)
+    prompt_messages = [{"role": "system", "content": prompt}] + data["history"][-20:]
 
-    bot_ka_jawab = await get_ai_response(prompt_messages)
-    
-    # Ab AI khud emojis lagayega, humein force karne ki zaroorat nahi.
-    
-    user_data["history"].append({"role": "assistant", "content": bot_ka_jawab})
-    await update.message.reply_text(bot_ka_jawab)
+    reply_text = await get_ai(prompt_messages)
+    reply_text = reply_text.strip()[:160]
+    if not reply_text.endswith("💋"):
+        reply_text += " " + random.choice(["😘", "💞", "😏", "🥺", "💋"])
+
+    data["history"].append({"role": "assistant", "content": reply_text})
+    await update.message.reply_text(reply_text)
     await save_memory()
 
-    # Admin ko message bhejna (optional)
     if ADMIN_CHAT_ID:
         try:
-            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"User: {user_ka_naam} ({cid}): {user_ka_message}\nBot: {bot_ka_jawab}")
-        except Exception as e:
-            print(f"Admin ko message nahi bhej paya: {e}")
+            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"User: {name} ({cid}): {msg}\nBot: {reply_text}")
+        except: pass
 
-
-# --- Automatic Messages (Jaise Good Morning/Night) ---
-# Is section mein koi badlav ki zaroorat nahi hai, yeh theek kaam kar raha hai.
 async def auto_msgs(bot):
     while True:
         await asyncio.sleep(60)
@@ -176,23 +147,21 @@ async def auto_msgs(bot):
             if not data or data.get("step", 0) < 3: continue
             try:
                 last_active = datetime.datetime.fromisoformat(data.get("last_active", now.isoformat()))
-                mins_since_last_msg = (now - last_active).total_seconds() / 60
+                mins = (now - last_active).total_seconds() / 60
                 gender = data.get("bot_gender", "female")
                 last_msg = data.get("last_msg", "").lower()
 
-                # Agar user ignore kare toh message bhejo
-                if data.get("last_speaker") == "assistant" and 3 < mins_since_last_msg < 5 and not data.get("ignore_message_sent"):
+                if data.get("last_speaker") == "assistant" and 2 < mins < 4 and not data.get("ignore_message_sent"):
                     data["ignore_message_sent"] = True
-                    prompt_for_ignore = [
+                    prompt = [
                         {"role": "system", "content": get_prompt(data.get("bot_name"), gender, "User")},
-                        {"role": "user", "content": "Ek chota, caring sa message Hinglish mein likho kyunki tumhara partner reply nahi kar raha aur tum use miss kar rahe ho."}
+                        {"role": "user", "content": "Clingy message in Hinglish because partner ignored me."}
                     ]
-                    reply = await get_ai_response(prompt_for_ignore)
+                    reply = await get_ai(prompt)
                     await bot.send_message(chat_id=int(cid), text=reply)
 
-                # Good Night message
                 if now.hour == 23 and not data.get("gn_sent"):
-                    if mins_since_last_msg > 45 or (any(w in last_msg for w in ["gn", "good night", "so ja", "bye"]) and mins_since_last_msg > 10):
+                    if mins > 45 or (any(w in last_msg for w in ["gn", "good night", "so ja", "bye"]) and mins > 10):
                         text = "Good night baby 🌙 so jao ab 😴" if gender == "male" else "Good night jaan 🌙 ab so jao 😴"
                         await bot.send_message(chat_id=int(cid), text=text)
                         sleep_mode.add(cid)
@@ -201,11 +170,10 @@ async def auto_msgs(bot):
 
                 if cid in sleep_mode:
                     last_user_msg_time = datetime.datetime.fromisoformat(data.get("last_active", now.isoformat()))
-                    if data.get("last_speaker") == "user" and (now - last_user_msg_time).total_seconds() / 60 < 60 :
+                    if (now - last_user_msg_time).total_seconds() / 60 < 60:
                         data["was_ignored_during_sleep"] = True
 
-                # Good Morning message
-                if cid in sleep_mode and 7 <= now.hour < 9 and not data.get("gm_sent"):
+                if cid in sleep_mode and 6 <= now.hour < 9 and not data.get("gm_sent"):
                     sleep_mode.remove(cid)
                     data["gm_sent"] = True
                     gm_text = "Good morning baby ☀️ utho na 😘" if gender == "male" else "Good morning jaan ☀️ uth jao 💋"
@@ -216,35 +184,28 @@ async def auto_msgs(bot):
                         await bot.send_message(chat_id=int(cid), text=sorry_text)
                         data["was_ignored_during_sleep"] = False
 
-                if now.hour >= 12: data["gm_sent"] = False
-                if now.hour < 23: data["gn_sent"] = False
+                if now.hour >= 12:
+                    data["gm_sent"] = False
+                    data["gn_sent"] = False
 
             except Exception as e:
-                print(f"AutoMsg mein error for {cid}: {e}")
+                print(f"AutoMsg error for {cid}: {e}")
         await save_memory()
 
-# --- Main Function (Jahan se Bot start hota hai) ---
 async def main():
     load_memory()
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
-    
-    # Background mein auto messages chalaane ke liye task
-    asyncio.create_task(auto_msgs(application.bot))
-    
-    print("🚀 Bot ab behtar personality ke saath start ho gaya hai.")
-    await application.initialize()
-    await application.updater.start_polling()
-    await application.start()
-    
-    while True:
-        await asyncio.sleep(3600)
+    app_ = Application.builder().token(TELEGRAM_TOKEN).build()
+    app_.add_handler(CommandHandler("start", start))
+    app_.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat))
+    asyncio.create_task(auto_msgs(app_.bot))
+    print("🚀 Bot started.")
+    await app_.initialize()
+    await app_.updater.start_polling()
+    await app_.start()
+    while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nBot ko band kar diya gaya.")
-    except Exception as e:
-        print(f"Ekdum main function mein error: {e}")
+        print("Bot stopped manually.")
