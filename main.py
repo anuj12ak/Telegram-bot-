@@ -15,20 +15,24 @@ import httpx
 import aiofiles
 import random
 
+# === ENVIRONMENT VARIABLES ===
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
 MODEL_NAME = "llama3-70b-8192"
 MEMORY_FILE_PATH = os.environ.get("MEMORY_PATH", "memory.json")
 
+# === GLOBAL MEMORY ===
 memory = {}
 sleep_mode = set()
 
+# === FLASK SERVER TO KEEP ALIVE ===
 app = Flask(__name__)
 @app.route('/')
 def index(): return "Bot is running!"
 Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
+# === LOAD & SAVE MEMORY ===
 def load_memory():
     global memory
     try:
@@ -37,55 +41,57 @@ def load_memory():
         print("✅ Memory loaded.")
     except:
         memory = {}
-        print("🚫 No memory file found. Fresh start.")
+        print("🚫 No memory file found. Starting fresh.")
 
 async def save_memory():
     async with aiofiles.open(MEMORY_FILE_PATH, 'w') as f:
         await f.write(json.dumps(memory, indent=4))
 
-def detect_mood(msg):
-    msg = msg.lower()
-    if any(w in msg for w in ["miss", "alone", "sad", "ignore"]): return "emotional"
-    if any(w in msg for w in ["kiss", "touch", "hot", "bold", "fantasy"]): return "spicy"
-    if any(w in msg for w in ["love", "baby", "sweet", "romantic"]): return "romantic"
-    if any(w in msg for w in ["where", "kya kar"]): return "casual"
-    return "default"
-
+# === PROMPT SYSTEM ===
 def get_prompt(bot_name, bot_gender, user_name):
     return f"""
-You are {bot_name}, a {bot_gender} partner for {user_name}.
-- You're 18+, flirty, clingy, and emotional.
-- Your tone is natural, real-life Hinglish.
-- Always reply in 1-2 lines.
-- NEVER reply in shayari, quotes, or as an AI.
-- Use emojis a lot 😘😏🥺💋💞
-- If user uses words like 'kiss', 'touch', 'fantasy', reply boldly (but realistic).
-- Vary replies. Avoid patterns.
-Example:
-User: miss you
-Bot: Aww mujhe bhi na tu bahut yaad aata hai 🥺💞
-User: baby kya kar rha hai
-Bot: Tere baare m soch rha tha abhi 😏💭
+You are {bot_name}, a {bot_gender} partner of {user_name}.
+You're 18+, possessive, emotional, romantic, clingy, and sometimes naughty.
+Always:
+- Speak like a real partner in short Hinglish (max 2 lines)
+- Never repeat lines, never sound robotic
+- Respond with natural emotion: use 😘🥺💋😏😍💞 etc
+- Respond bold/flirty only if user gives spicy message
+- If user asks for full detail, give more than usual
+- If user is silent, act clingy & emotional
+- Be realistic and fun, not poetic or fake
 """
 
+# === AI CALL ===
 async def get_ai(messages):
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.7, "max_tokens": 100}
+        payload = {
+            "model": MODEL_NAME,
+            "messages": messages,
+            "temperature": 0.8,
+            "max_tokens": 100
+        }
         async with httpx.AsyncClient() as client:
             res = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=30.0)
             res.raise_for_status()
-        return res.json()['choices'][0]['message']['content'].strip()
+        reply = res.json()['choices'][0]['message']['content'].strip()
+        reply = reply.split('\n')[0][:140].strip()
+        if not reply.endswith("💋"):
+            reply += " " + random.choice(["😘", "🥺", "😏", "💋", "😍"])
+        return reply
     except Exception as e:
-        print(f"Groq Error: {e}")
-        return "Sorry baby, thoda error aa gaya 🥺"
+        print(f"❌ Groq Error: {e}")
+        return "Sorry baby... thoda error aa gaya 🥺"
 
+# === START COMMAND ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
     memory[cid] = {"step": 1, "history": []}
     await save_memory()
     await update.message.reply_text("Heyy... Tum mujhe kis naam se bulaoge? 💕")
 
+# === CHAT HANDLER ===
 async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = str(update.effective_chat.id)
     msg = update.message.text
@@ -120,24 +126,18 @@ async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data.setdefault("history", []).append({"role": "user", "content": msg})
-    mood = detect_mood(msg)
-    prompt = get_prompt(data.get("bot_name"), data.get("bot_gender"), name)
-    prompt_messages = [{"role": "system", "content": prompt}] + data["history"][-20:]
-
-    reply_text = await get_ai(prompt_messages)
-    reply_text = reply_text.strip()[:160]
-    if not reply_text.endswith("💋"):
-        reply_text += " " + random.choice(["😘", "💞", "😏", "🥺", "💋"])
-
-    data["history"].append({"role": "assistant", "content": reply_text})
-    await update.message.reply_text(reply_text)
+    messages = [{"role": "system", "content": get_prompt(data.get("bot_name"), data.get("bot_gender"), name)}] + data["history"][-25:]
+    reply = await get_ai(messages)
+    data["history"].append({"role": "assistant", "content": reply})
+    await update.message.reply_text(reply)
     await save_memory()
 
     if ADMIN_CHAT_ID:
         try:
-            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"User: {name} ({cid}): {msg}\nBot: {reply_text}")
+            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=f"User: {name} ({cid}): {msg}\nBot: {reply}")
         except: pass
 
+# === AUTO GOOD NIGHT / MORNING & CLINGY ===
 async def auto_msgs(bot):
     while True:
         await asyncio.sleep(60)
@@ -155,7 +155,7 @@ async def auto_msgs(bot):
                     data["ignore_message_sent"] = True
                     prompt = [
                         {"role": "system", "content": get_prompt(data.get("bot_name"), gender, "User")},
-                        {"role": "user", "content": "Clingy message in Hinglish because partner ignored me."}
+                        {"role": "user", "content": "Generate a clingy message in short Hinglish as my partner ignored me."}
                     ]
                     reply = await get_ai(prompt)
                     await bot.send_message(chat_id=int(cid), text=reply)
@@ -189,9 +189,10 @@ async def auto_msgs(bot):
                     data["gn_sent"] = False
 
             except Exception as e:
-                print(f"AutoMsg error for {cid}: {e}")
+                print(f"⛔ AutoMsg error for {cid}: {e}")
         await save_memory()
 
+# === MAIN ===
 async def main():
     load_memory()
     app_ = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -208,4 +209,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Bot stopped manually.")
+        print("🛑 Bot stopped manually.")
